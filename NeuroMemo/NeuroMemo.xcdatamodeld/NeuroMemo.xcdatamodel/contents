@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<model type="com.apple.IDECoreDataModeler.DataModel" documentVersion="1.0" lastSavedToolsVersion="21754" systemVersion="22E261" minimumToolsVersion="Automatic" sourceLanguage="Swift" userDefinedModelVersionIdentifier="">
+    <entity name="AchievementEntity" representedClassName="AchievementEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="achievementId" optional="NO" attributeType="String"/>
+        <attribute name="achievementDescription" optional="YES" attributeType="String"/>
+        <attribute name="dateUnlocked" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="name" optional="NO" attributeType="String"/>
+        <attribute name="viewed" optional="NO" attributeType="Boolean" defaultValueString="NO" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="CompletedGameEntity" representedClassName="CompletedGameEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="completionDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="gameId" optional="NO" attributeType="String"/>
+        <attribute name="gameType" optional="NO" attributeType="String"/>
+        <attribute name="score" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="timeSpent" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="StudiedStructureEntity" representedClassName="StudiedStructureEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="confidenceLevel" optional="NO" attributeType="Integer 16" defaultValueString="1" usesScalarValueType="YES"/>
+        <attribute name="lastReviewDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="structureId" optional="NO" attributeType="String"/>
+        <attribute name="timeStudied" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+    </entity>
+    <entity name="UserProgressEntity" representedClassName="UserProgressEntity" syncable="YES" codeGenerationType="class">
+        <attribute name="lastActiveDate" optional="NO" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="lastStudyDate" optional="YES" attributeType="Date" usesScalarValueType="NO"/>
+        <attribute name="notificationsEnabled" optional="NO" attributeType="Boolean" defaultValueString="YES" usesScalarValueType="YES"/>
+        <attribute name="selectedLanguage" optional="YES" attributeType="String"/>
+        <attribute name="streakDays" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="totalCorrectAnswers" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="totalIncorrectAnswers" optional="NO" attributeType="Integer 32" defaultValueString="0" usesScalarValueType="YES"/>
+        <attribute name="totalStudyTime" optional="NO" attributeType="Double" defaultValueString="0.0" usesScalarValueType="YES"/>
+        <attribute name="userId" optional="NO" attributeType="String"/>
+        <attribute name="username" optional="YES" attributeType="String"/>
+        <relationship name="achievements" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="AchievementEntity" inverseName="userProgress" inverseEntity="AchievementEntity"/>
+        <relationship name="completedGames" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="CompletedGameEntity" inverseName="userProgress" inverseEntity="CompletedGameEntity"/>
+        <relationship name="studiedStructures" optional="YES" toMany="YES" deletionRule="Cascade" destinationEntity="StudiedStructureEntity" inverseName="userProgress" inverseEntity="StudiedStructureEntity"/>
+    </entity>
+</model> 

@@ -1,5 +1,41 @@
 import Foundation
 
+// Estructura para configuraciones de visualización
+struct VisualizationSettings: Codable {
+    var showLabels: Bool = true
+    var highlightStructures: Bool = true
+    var colorScheme: ColorScheme = .standard
+    
+    enum ColorScheme: String, Codable {
+        case standard
+        case highContrast
+        case colorblindFriendly
+    }
+}
+
+// Estructura para configuraciones del usuario
+struct UserSettings: Codable {
+    var language: String = "es"
+    var notificationsEnabled: Bool = true
+    var visualizationSettings: VisualizationSettings = VisualizationSettings()
+    var reviewIntervals: [Int] = [1, 3, 7, 14, 30, 90, 180]
+}
+
+// Estructura para estadísticas de estudio
+struct StudyStats: Codable {
+    var totalStudyTime: TimeInterval = 0
+    var correctAnswers: Int = 0
+    var incorrectAnswers: Int = 0
+    
+    var accuracyPercentage: String {
+        let total = correctAnswers + incorrectAnswers
+        if total == 0 { return "N/A" }
+        let percentage = (Double(correctAnswers) / Double(total)) * 100
+        return "\(Int(percentage))%"
+    }
+}
+
+// Estructura principal de progreso del usuario
 struct UserProgress: Codable {
     var userId: String
     var username: String = "Usuario"
@@ -11,22 +47,7 @@ struct UserProgress: Codable {
     var completedGames: [CompletedGame] = []
     var achievements: [Achievement] = []
     var settings: UserSettings = UserSettings()
-    var studyStats = StudyStats()
-    
-    // Estadísticas de estudio
-    struct StudyStats: Codable {
-        var totalStudyTime: TimeInterval = 0
-        var correctAnswers: Int = 0
-        var incorrectAnswers: Int = 0
-        
-        var accuracyPercentage: String {
-            let total = correctAnswers + incorrectAnswers
-            if total == 0 { return "N/A" }
-            
-            let percentage = (Double(correctAnswers) / Double(total)) * 100
-            return "\(Int(percentage))%"
-        }
-    }
+    var studyStats: StudyStats = StudyStats()
     
     init(userId: String) {
         self.userId = userId
@@ -42,44 +63,44 @@ struct UserProgress: Codable {
         
         let calendar = Calendar.current
         if calendar.isDateInToday(lastDate) {
-            // Ya se actualizó hoy
             return
         } else if calendar.isDateInYesterday(lastDate) {
-            // Continúa la racha
             streakDays += 1
             lastStudyDate = Date()
         } else {
-            // Se rompió la racha
             streakDays = 1
             lastStudyDate = Date()
         }
     }
 }
 
+// Estructura para estructuras estudiadas
 struct StudiedStructure: Codable, Identifiable {
     var id: String { structureId }
     var structureId: String
     var timeStudied: TimeInterval
     var lastReviewDate: Date
-    var confidenceLevel: Int // 1-10, donde 10 es el máximo nivel de confianza
+    var confidenceLevel: Int // 1-10
     
     init(structureId: String, timeStudied: TimeInterval, lastReviewDate: Date, confidenceLevel: Int) {
         self.structureId = structureId
         self.timeStudied = timeStudied
         self.lastReviewDate = lastReviewDate
-        self.confidenceLevel = max(1, min(10, confidenceLevel)) // Limitar entre 1-10
+        self.confidenceLevel = max(1, min(10, confidenceLevel))
     }
 }
 
+// Estructura para juegos completados
 struct CompletedGame: Codable, Identifiable {
     var id: String { gameId }
     var gameId: String
-    var gameType: String // Identificador del tipo de juego (ej: "connectionGame", "touchAndName")
+    var gameType: String
     var completionDate: Date
-    var score: Double // Normalizado entre 0-100
+    var score: Double
     var timeSpent: TimeInterval
 }
 
+// Estructura para logros
 struct Achievement: Codable, Identifiable {
     var id: String
     var name: String
@@ -89,25 +110,6 @@ struct Achievement: Codable, Identifiable {
     
     var isUnlocked: Bool {
         return dateUnlocked != nil
-    }
-}
-
-struct UserSettings: Codable {
-    var language: String = "es"
-    var notificationsEnabled: Bool = true
-    var visualizationSettings: VisualizationSettings = VisualizationSettings()
-    var reviewIntervals: [Int] = [1, 3, 7, 14, 30, 90, 180] // Días entre revisiones basado en nivel de confianza
-}
-
-struct VisualizationSettings: Codable {
-    var showLabels: Bool = true
-    var highlightStructures: Bool = true
-    var colorScheme: ColorScheme = .standard
-    
-    enum ColorScheme: String, Codable {
-        case standard
-        case highContrast
-        case colorblindFriendly
     }
 }
 
