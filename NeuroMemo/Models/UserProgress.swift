@@ -3,6 +3,7 @@ import Foundation
 /// Modelo para seguimiento del progreso del usuario
 struct UserProgress: Codable {
     var userId: String
+    var username: String = "Usuario" // Añadido para el perfil
     var totalStudyTime: TimeInterval = 0
     var sessionsCompleted: Int = 0
     var lastSessionDate: Date?

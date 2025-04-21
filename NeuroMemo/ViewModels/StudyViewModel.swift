@@ -3,49 +3,75 @@ import Combine
 
 class StudyViewModel: ObservableObject {
     // Estado publicado
-    @Published var selectedSystem: AnatomicalSystem?
-    @Published var selectedLevels: [AnatomicalLevel] = []
-    @Published var selectedModalities: [ImageModality] = []
+    @Published var selectedSystem: String? // Cambiado de AnatomicalSystem a String
+    @Published var selectedLevels: [Int] = [] // Cambiado de [AnatomicalLevel] a [Int]
+    // @Published var selectedModalities: [ImageModality] = [] // Comentado o eliminar si ImageModality no está definido
     @Published var selectedDifficulty: Int?
     @Published var filteredItems: [StudyItem] = []
     @Published var isLoading = false
     @Published var isListening = false
-    
+
     // Servicios
-    private var dataManager: DataManager?
+    private let dataManager: DataManager
+    private let knowledgeBase: KnowledgeBase // Añadido KnowledgeBase
     private var cancellables = Set<AnyCancellable>()
-    
-    // Inicializador
-    init(dataManager: DataManager? = nil) {
+
+    // Inicializador con inyección de dependencias
+    init(dataManager: DataManager = DataManager.shared, knowledgeBase: KnowledgeBase = KnowledgeBase.shared) {
         self.dataManager = dataManager
+        self.knowledgeBase = knowledgeBase // Asignar knowledgeBase
         setupSubscriptions()
+        updateFilteredItems() // Cargar datos iniciales
     }
-    
+
     // Configurar suscripciones a cambios
     private func setupSubscriptions() {
         // Observar cambios en filtros y actualizar elementos filtrados
         $selectedSystem
-            .combineLatest($selectedLevels, $selectedModalities, $selectedDifficulty)
+            .combineLatest($selectedLevels, /*$selectedModalities,*/ $selectedDifficulty) // Ajustado combineLatest
             .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 self?.updateFilteredItems()
             }
             .store(in: &cancellables)
     }
-    
+
     // Actualizar elementos filtrados
     private func updateFilteredItems() {
-        // Implementación inicial - aquí filtrarías los datos reales
         isLoading = true
-        
-        // Simular carga
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-            // Aquí implementarías la lógica real de filtrado
-            self.filteredItems = self.createSampleItems()
-            self.isLoading = false
+
+        // Usar knowledgeBase para obtener las estructuras
+        var structures = knowledgeBase.structures
+
+        // Aplicar filtros
+        if let system = selectedSystem {
+            structures = structures.filter { $0.system == system }
         }
+        if !selectedLevels.isEmpty {
+            structures = structures.filter { selectedLevels.contains($0.level) }
+        }
+        if let difficulty = selectedDifficulty {
+            structures = structures.filter { $0.difficulty == difficulty }
+        }
+        // Añadir filtro por selectedModalities si es necesario
+
+        // Mapear a StudyItem
+        self.filteredItems = structures.map { structure in
+            StudyItem(
+                id: structure.id, // Usar String ID
+                title: structure.name,
+                subtitle: structure.system,
+                type: .structure,
+                imageURL: structure.imageReferences?.first, // Usar primera imagen como referencia
+                progress: structure.userFamiliarity, // Usar familiaridad como progreso
+                tags: structure.tags ?? [],
+                lastStudied: structure.lastStudied
+            )
+        }
+
+        isLoading = false
     }
-    
+
     // Filtrar elementos por texto de búsqueda
     func filterItems(searchText: String) -> [StudyItem] {
         if searchText.isEmpty {
@@ -64,7 +90,7 @@ class StudyViewModel: ObservableObject {
     func resetFilters() {
         selectedSystem = nil
         selectedLevels = []
-        selectedModalities = []
+        // selectedModalities = [] // Comentado o eliminar si ImageModality no está definido
         selectedDifficulty = nil
     }
     
@@ -74,7 +100,8 @@ class StudyViewModel: ObservableObject {
         // Aquí conectarías con WhisperService
     }
     
-    // Crear elementos de muestra
+    // Crear elementos de muestra (ya no es necesario si updateFilteredItems carga datos reales)
+    /*
     private func createSampleItems() -> [StudyItem] {
         // Implementación inicial con datos de ejemplo
         var items: [StudyItem] = []
@@ -96,11 +123,12 @@ class StudyViewModel: ObservableObject {
         
         return items
     }
+    */
 }
 
-// Definición de StudyItem
+// Definición de StudyItem (ajustar ID a String)
 struct StudyItem: Identifiable {
-    var id: UUID
+    var id: String // Cambiado de UUID a String
     var title: String
     var subtitle: String
     var type: StudyItemType

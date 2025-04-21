@@ -1,136 +1,164 @@
-// DifficultyManager.swift
 import Foundation
 
 class DifficultyManager {
-    private let userDefaultsKey = "com.neuromemo.userDifficulties"
+    static let shared = DifficultyManager()
     
-    // Obtener dificultad recomendada para un usuario en un tipo de juego
-    func getDifficultyForUser(userId: String, gameType: String) -> DifficultyLevel {
-        let userPreferences = getUserPreferences()
+    // Niveles de dificultad disponibles
+    enum DifficultyLevel: Int, CaseIterable, Codable {
+        case beginner = 1
+        case easy = 2
+        case medium = 3
+        case hard = 4
+        case expert = 5
         
-        // Verificar si hay una dificultad guardada para este usuario y juego
-        if let userSettings = userPreferences[userId],
-           let gameDifficulty = userSettings[gameType] {
-            return DifficultyLevel(rawValue: gameDifficulty) ?? .medium
-        }
-        
-        // Por defecto, comenzar en dificultad media
-        return .medium
-    }
-    
-    // Actualizar dificultad basada en el rendimiento
-    func updateDifficulty(userId: String, gameType: String, score: Int, maxPossibleScore: Int) {
-        let currentDifficulty = getDifficultyForUser(userId: userId, gameType: gameType)
-        var newDifficulty = currentDifficulty
-        
-        // Calcular porcentaje de éxito
-        let successPercent: Double
-        if maxPossibleScore > 0 {
-            successPercent = Double(score) / Double(maxPossibleScore)
-        } else {
-            // Para juegos como contrarreloj
-            successPercent = score >= 15 ? 0.9 : Double(score) / 15.0
-        }
-        
-        // Ajustar dificultad basada en el rendimiento
-        if successPercent > 0.8 {
-            // Muy buen rendimiento, aumentar dificultad
-            switch currentDifficulty {
-            case .easy:
-                newDifficulty = .medium
-            case .medium:
-                newDifficulty = .hard
-            case .hard:
-                newDifficulty = .expert
-            case .expert:
-                newDifficulty = .expert
-            }
-        } else if successPercent < 0.4 {
-            // Mal rendimiento, reducir dificultad
-            switch currentDifficulty {
-            case .easy:
-                newDifficulty = .easy
-            case .medium:
-                newDifficulty = .easy
-            case .hard:
-                newDifficulty = .medium
-            case .expert:
-                newDifficulty = .hard
+        var displayName: String {
+            switch self {
+            case .beginner: return "Principiante"
+            case .easy: return "Fácil"
+            case .medium: return "Medio"
+            case .hard: return "Difícil"
+            case .expert: return "Experto"
             }
         }
-        
-        // Si ha cambiado, guardar nueva dificultad
-        if newDifficulty != currentDifficulty {
-            saveUserDifficulty(userId: userId, gameType: gameType, difficulty: newDifficulty)
-        }
     }
     
-    // Guardar dificultad para un usuario y juego
-    private func saveUserDifficulty(userId: String, gameType: String, difficulty: DifficultyLevel) {
-        var userPreferences = getUserPreferences()
+    private(set) var currentLevel: DifficultyLevel = .medium
+    private(set) var adaptiveMode: Bool = true
+    
+    // Parámetros para adaptación de dificultad
+    private var consecutiveSuccesses = 0
+    private var consecutiveFailures = 0
+    private let thresholdForIncrease = 3
+    private let thresholdForDecrease = 2
+    
+    private init() {
+        // Cargar nivel guardado si existe
+        loadSavedDifficulty()
+    }
+    
+    // MARK: - Configuración de Dificultad
+    
+    func setDifficulty(_ level: DifficultyLevel) {
+        currentLevel = level
+        saveDifficulty()
+    }
+    
+    func setAdaptiveMode(_ enabled: Bool) {
+        adaptiveMode = enabled
+        saveDifficulty()
+    }
+    
+    // MARK: - Adaptación de Dificultad
+    
+    /// Notifica al gestor sobre el resultado de una interacción para ajustar la dificultad
+    /// - Parameter success: Si la interacción fue exitosa
+    /// - Returns: Booleano indicando si el nivel de dificultad cambió
+    @discardableResult
+    func recordInteractionResult(_ success: Bool) -> Bool {
+        guard adaptiveMode else { return false }
         
-        // Crear o actualizar preferencias del usuario
-        if var userSettings = userPreferences[userId] {
-            userSettings[gameType] = difficulty.rawValue
-            userPreferences[userId] = userSettings
+        var difficultyChanged = false
+        
+        if success {
+            consecutiveSuccesses += 1
+            consecutiveFailures = 0
+            
+            // Aumentar dificultad si hay suficientes éxitos consecutivos
+            if consecutiveSuccesses >= thresholdForIncrease && currentLevel != .expert {
+                increaseDifficulty()
+                difficultyChanged = true
+                consecutiveSuccesses = 0
+            }
         } else {
-            userPreferences[userId] = [gameType: difficulty.rawValue]
+            consecutiveFailures += 1
+            consecutiveSuccesses = 0
+            
+            // Disminuir dificultad si hay suficientes fallos consecutivos
+            if consecutiveFailures >= thresholdForDecrease && currentLevel != .beginner {
+                decreaseDifficulty()
+                difficultyChanged = true
+                consecutiveFailures = 0
+            }
         }
         
-        // Guardar en UserDefaults
-        if let encoded = try? JSONEncoder().encode(userPreferences) {
-            UserDefaults.standard.set(encoded, forKey: userDefaultsKey)
-        }
+        return difficultyChanged
     }
     
-    // Obtener preferencias de todos los usuarios
-    private func getUserPreferences() -> [String: [String: String]] {
-        guard let data = UserDefaults.standard.data(forKey: userDefaultsKey),
-              let decoded = try? JSONDecoder().decode([String: [String: String]].self, from: data) else {
-            return [:]
-        }
-        return decoded
+    /// Aumenta el nivel de dificultad en un paso
+    func increaseDifficulty() {
+        guard let nextLevel = DifficultyLevel(rawValue: currentLevel.rawValue + 1) else { return }
+        currentLevel = nextLevel
+        saveDifficulty()
     }
     
-    // Reiniciar dificultad para un usuario
-    func resetUserDifficulty(userId: String) {
-        var userPreferences = getUserPreferences()
-        userPreferences[userId] = nil
+    /// Disminuye el nivel de dificultad en un paso
+    func decreaseDifficulty() {
+        guard let prevLevel = DifficultyLevel(rawValue: currentLevel.rawValue - 1) else { return }
+        currentLevel = prevLevel
+        saveDifficulty()
+    }
+    
+    // MARK: - Persistencia
+    
+    private func loadSavedDifficulty() {
+        if let savedLevel = UserDefaults.standard.object(forKey: "UserDifficultyLevel") as? Int,
+           let level = DifficultyLevel(rawValue: savedLevel) {
+            currentLevel = level
+        }
         
-        if let encoded = try? JSONEncoder().encode(userPreferences) {
-            UserDefaults.standard.set(encoded, forKey: userDefaultsKey)
-        }
+        adaptiveMode = UserDefaults.standard.bool(forKey: "AdaptiveDifficultyEnabled")
     }
     
-    // Sugerir dificultad basada en experiencia
-    func suggestDifficultyForNewUser(previousExperience: String) -> DifficultyLevel {
-        switch previousExperience.lowercased() {
-        case "ninguna", "principiante":
-            return .easy
-        case "intermedia":
-            return .medium
-        case "avanzada", "experto":
-            return .hard
-        default:
-            return .medium
-        }
+    private func saveDifficulty() {
+        UserDefaults.standard.set(currentLevel.rawValue, forKey: "UserDifficultyLevel")
+        UserDefaults.standard.set(adaptiveMode, forKey: "AdaptiveDifficultyEnabled")
     }
     
-    // Sugerir dificultad personalizada basada en categoría
-    func suggestDifficultyForCategory(userId: String, category: String) -> DifficultyLevel {
-        // Obtener progreso del usuario en esta categoría
-        // Implementación simplificada - en una app real se analizaría el progreso real
+    // MARK: - Ajuste de Parámetros de Juego
+    
+    /// Ajusta el tiempo disponible para un juego según el nivel de dificultad actual
+    /// - Parameter baseTime: Tiempo base en segundos
+    /// - Returns: Tiempo ajustado en segundos
+    func adjustTimeLimit(baseTime: TimeInterval) -> TimeInterval {
+        let timeFactors: [DifficultyLevel: Double] = [
+            .beginner: 2.0,   // El doble de tiempo
+            .easy: 1.5,       // 50% más de tiempo
+            .medium: 1.0,     // Tiempo base
+            .hard: 0.8,       // 20% menos de tiempo
+            .expert: 0.6      // 40% menos de tiempo
+        ]
         
-        let userPreferences = getUserPreferences()
-        let userGameHistory = userPreferences[userId] ?? [:]
+        let factor = timeFactors[currentLevel] ?? 1.0
+        return baseTime * factor
+    }
+    
+    /// Ajusta el número de opciones a mostrar según el nivel de dificultad
+    /// - Parameter baseCount: Número base de opciones
+    /// - Returns: Número ajustado de opciones
+    func adjustOptionsCount(baseCount: Int) -> Int {
+        let countFactors: [DifficultyLevel: Int] = [
+            .beginner: -1,    // Una opción menos
+            .easy: 0,         // Igual
+            .medium: 1,       // Una opción más
+            .hard: 2,         // Dos opciones más
+            .expert: 3        // Tres opciones más
+        ]
         
-        // Si el usuario ha jugado varios juegos, sugerir dificultad más alta
-        if userGameHistory.count > 3 {
-            return .hard
-        } else if userGameHistory.count > 1 {
-            return .medium
-        } else {
-            return .easy
-        }
+        let adjustment = countFactors[currentLevel] ?? 0
+        return max(2, baseCount + adjustment) // Mínimo 2 opciones
+    }
+    
+    /// Obtiene el nivel de detalle para mostrar en las pistas
+    /// - Returns: Nivel de detalle (0-1) donde 1 es máximo detalle
+    func getHintDetailLevel() -> Float {
+        let detailLevels: [DifficultyLevel: Float] = [
+            .beginner: 1.0,   // Pistas completas
+            .easy: 0.8,       // 80% de detalle
+            .medium: 0.6,     // 60% de detalle
+            .hard: 0.3,       // 30% de detalle
+            .expert: 0.1      // 10% de detalle (mínimas pistas)
+        ]
+        
+        return detailLevels[currentLevel] ?? 0.6
     }
 }

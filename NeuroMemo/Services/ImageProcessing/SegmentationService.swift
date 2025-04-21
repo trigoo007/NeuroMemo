@@ -1,160 +1,200 @@
-// SegmentationService.swift
 import Foundation
 import Vision
 import UIKit
+import CoreML
 
 enum SegmentationError: Error {
-    case processingError
-    case noObjectsDetected
-    case imageConversionError
+    case modelLoadFailed
+    case processingFailed
+    case invalidImage
 }
 
 class SegmentationService {
-    // Identificar y segmentar diferentes partes en una imagen anatómica
-    func segmentImage(image: UIImage, completion: @escaping (Result<[AnatomicalSegment], Error>) -> Void) {
+    static let shared = SegmentationService()
+    
+    private var segmentationModel: VNCoreMLModel?
+    
+    private init() {
+        loadModel()
+    }
+    
+    private func loadModel() {
+        // Cargar el modelo de segmentación si está disponible en el bundle
+        if let modelURL = Bundle.main.url(forResource: "AnatomicalSegmenter", withExtension: "mlmodelc") {
+            do {
+                segmentationModel = try VNCoreMLModel(for: MLModel(contentsOf: modelURL))
+                print("Modelo de segmentación cargado correctamente")
+            } catch {
+                print("Error al cargar el modelo de segmentación: \(error.localizedDescription)")
+            }
+        } else {
+            print("Advertencia: No se encontró el modelo de segmentación en el bundle")
+        }
+    }
+    
+    /// Segmenta una imagen anatómica e identifica diferentes estructuras
+    /// - Parameters:
+    ///   - image: UIImage que contiene la imagen anatómica a procesar
+    ///   - completion: Callback con el resultado de la segmentación (máscara por estructura)
+    func segmentImage(_ image: UIImage, completion: @escaping (Result<[String: UIImage], Error>) -> Void) {
         guard let cgImage = image.cgImage else {
-            completion(.failure(SegmentationError.imageConversionError))
+            completion(.failure(SegmentationError.invalidImage))
             return
         }
         
-        // Crear solicitud de análisis de imagen
-        let request = VNGenerateObjectnessBasedSaliencyImageRequest { request, error in
+        guard let model = segmentationModel else {
+            completion(.failure(SegmentationError.modelLoadFailed))
+            return
+        }
+        
+        // Configurar la solicitud de Vision para la segmentación
+        let request = VNCoreMLRequest(model: model) { request, error in
             if let error = error {
                 completion(.failure(error))
                 return
             }
             
-            guard let results = request.results as? [VNSaliencyImageObservation],
-                  let observation = results.first else {
-                completion(.failure(SegmentationError.processingError))
+            guard let results = request.results as? [VNCoreMLFeatureValueObservation],
+                  let segmentationMap = results.first?.featureValue.multiArrayValue else {
+                completion(.failure(SegmentationError.processingFailed))
                 return
             }
             
-            // Procesar mapa de prominencia para detectar regiones
-            self.processRegions(from: observation, in: image, completion: completion)
+            // Procesar el mapa de segmentación y convertirlo en máscaras por estructura
+            self.processSegmentationMap(segmentationMap, originalImage: image) { result in
+                completion(result)
+            }
         }
         
-        // Ejecutar solicitud
-        let requestHandler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        // Configurar opciones de procesamiento
+        request.imageCropAndScaleOption = .scaleFill
         
+        // Ejecutar la solicitud de Vision
+        let handler = VNImageRequestHandler(cgImage: cgImage)
         do {
-            try requestHandler.perform([request])
+            try handler.perform([request])
         } catch {
             completion(.failure(error))
         }
     }
     
-    // Procesar regiones detectadas en el mapa de prominencia
-    private func processRegions(from observation: VNSaliencyImageObservation, in image: UIImage, completion: @escaping (Result<[AnatomicalSegment], Error>) -> Void) {
-        guard let salientObjects = observation.salientObjects else {
-            completion(.failure(SegmentationError.noObjectsDetected))
-            return
-        }
+    /// Procesa el mapa de segmentación producido por el modelo y crea máscaras individuales
+    private func processSegmentationMap(_ segmentationMap: MLMultiArray, originalImage: UIImage, completion: @escaping (Result<[String: UIImage], Error>) -> Void) {
+        // En una implementación real, convertiríamos el MLMultiArray a múltiples máscaras
+        // Aquí proporcionamos un ejemplo simplificado
         
-        let imageSize = image.size
-        var segments: [AnatomicalSegment] = []
-        
-        for (index, object) in salientObjects.enumerated() {
-            // Convertir coordenadas normalizadas a coordenadas de imagen
-            let boundingBox = VNImageRectForNormalizedRect(object.boundingBox, Int(imageSize.width), Int(imageSize.height))
-            
-            // Crear segmento anatómico
-            let segment = AnatomicalSegment(
-                id: "segment_\(index)",
-                boundingBox: boundingBox,
-                confidence: object.confidence,
-                maskImage: nil
-            )
-            
-            segments.append(segment)
-            
-            // Si hay muchos segmentos, limitamos para no sobrecargar
-            if segments.count >= 10 {
-                break
-            }
-        }
-        
-        if segments.isEmpty {
-            completion(.failure(SegmentationError.noObjectsDetected))
-        } else {
-            completion(.success(segments))
-        }
-    }
-    
-    // Crear máscaras para cada segmento
-    func generateMasks(for segments: [AnatomicalSegment], from image: UIImage) -> [AnatomicalSegment] {
-        var segmentsWithMasks: [AnatomicalSegment] = []
-        
-        for segment in segments {
-            // Crear una imagen de máscara
-            let renderer = UIGraphicsImageRenderer(size: image.size)
-            let maskImage = renderer.image { context in
-                UIColor.clear.setFill()
-                context.fill(CGRect(origin: .zero, size: image.size))
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                // Obtener dimensiones del mapa de segmentación
+                // Típicamente en forma [batch, clases, altura, anchura]
+                let width = segmentationMap.shape[3].intValue
+                let height = segmentationMap.shape[2].intValue
+                let numClasses = segmentationMap.shape[1].intValue
                 
-                UIColor.white.setFill()
-                context.fill(segment.boundingBox)
+                // Crear diccionario para las máscaras resultantes
+                var segmentationMasks: [String: UIImage] = [:]
+                
+                // Nombres de las clases/estructuras (deberían venir del modelo)
+                let classNames = ["fondo", "cerebro", "cerebelo", "tallo_cerebral", "ventrículos", "médula_espinal"]
+                
+                // Para cada clase, crear una máscara
+                for classIndex in 0..<min(numClasses, classNames.count) {
+                    let className = classNames[classIndex]
+                    
+                    // Crear un bitmap para esta clase
+                    var pixelBuffer = [UInt8](repeating: 0, count: width * height * 4) // RGBA
+                    
+                    // Llenar el buffer con los valores de segmentación
+                    for y in 0..<height {
+                        for x in 0..<width {
+                            // Calcular el valor de probabilidad para esta clase en este píxel
+                            // El índice exacto dependerá de la estructura del MLMultiArray
+                            let index = [0, classIndex, y, x] as [NSNumber]
+                            let probability = segmentationMap[index].floatValue
+                            
+                            // Si la probabilidad supera un umbral, marcar como parte de esta estructura
+                            if probability > 0.5 {
+                                let pixelIndex = (y * width + x) * 4
+                                
+                                // Codificar color según la clase (podría usar colores más distintivos)
+                                pixelBuffer[pixelIndex] = UInt8(255) // R
+                                pixelBuffer[pixelIndex + 1] = UInt8(classIndex * 40) // G
+                                pixelBuffer[pixelIndex + 2] = UInt8(255 - classIndex * 40) // B
+                                pixelBuffer[pixelIndex + 3] = UInt8(180) // Alpha (semi-transparente)
+                            }
+                        }
+                    }
+                    
+                    // Convertir el buffer a UIImage
+                    let mask = self.createImageFromPixelBuffer(pixelBuffer, width: width, height: height)
+                    segmentationMasks[className] = mask
+                }
+                
+                DispatchQueue.main.async {
+                    completion(.success(segmentationMasks))
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    completion(.failure(error))
+                }
             }
-            
-            let segmentWithMask = AnatomicalSegment(
-                id: segment.id,
-                boundingBox: segment.boundingBox,
-                confidence: segment.confidence,
-                maskImage: maskImage
-            )
-            
-            segmentsWithMasks.append(segmentWithMask)
         }
-        
-        return segmentsWithMasks
     }
     
-    // Mejorar una región de la imagen
-    func enhanceRegion(in image: UIImage, region: CGRect) -> UIImage {
-        guard let cgImage = image.cgImage,
-              let croppedCGImage = cgImage.cropping(to: region) else {
-            return image
+    /// Crea una UIImage a partir de un buffer de píxeles RGBA
+    private func createImageFromPixelBuffer(_ pixelBuffer: [UInt8], width: Int, height: Int) -> UIImage? {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        let bitmapInfo = CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue)
+        
+        guard let context = CGContext(
+            data: UnsafeMutableRawPointer(mutating: pixelBuffer),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width * 4,
+            space: colorSpace,
+            bitmapInfo: bitmapInfo.rawValue
+        ) else {
+            return nil
         }
         
-        let croppedImage = UIImage(cgImage: croppedCGImage)
+        guard let cgImage = context.makeImage() else {
+            return nil
+        }
         
-        // Aplicar mejoras (brillo, contraste)
-        return applyEnhancements(to: croppedImage)
+        return UIImage(cgImage: cgImage)
     }
     
-    // Aplicar mejoras básicas a una imagen
-    private func applyEnhancements(to image: UIImage) -> UIImage {
-        guard let cgImage = image.cgImage else {
-            return image
+    /// Identifica estructuras anatómicas en una región específica de una imagen
+    func identifyStructuresInRegion(image: UIImage, region: CGRect, completion: @escaping ([AnatomicalStructure]) -> Void) {
+        // En una implementación real, esto combinaría la segmentación con una búsqueda
+        // en la base de conocimiento para identificar las estructuras en la región seleccionada
+        
+        // Primero segmentamos la imagen completa
+        segmentImage(image) { result in
+            switch result {
+            case .success(let segmentationMasks):
+                // Buscar qué estructuras están presentes en la región seleccionada
+                var detectedStructureIds: [String] = []
+                
+                // Analizar cada máscara para ver si hay solapamiento con la región
+                for (structureName, _) in segmentationMasks {
+                    // Aquí habría que comprobar realmente si la máscara tiene píxeles
+                    // en la región seleccionada. Simplificamos para el ejemplo.
+                    detectedStructureIds.append(structureName)
+                }
+                
+                // Buscar las estructuras correspondientes en la base de conocimiento
+                let structures = detectedStructureIds.compactMap { structureId in
+                    KnowledgeBase.shared.getStructureById(structureId)
+                }
+                
+                completion(structures)
+                
+            case .failure:
+                // En caso de error, devolver una lista vacía
+                completion([])
+            }
         }
-        
-        // Crear contexto CIImage
-        let ciImage = CIImage(cgImage: cgImage)
-        let context = CIContext()
-        
-        // Ajustar filtros
-        guard let filter = CIFilter(name: "CIColorControls") else {
-            return image
-        }
-        
-        filter.setValue(ciImage, forKey: kCIInputImageKey)
-        filter.setValue(1.1, forKey: kCIInputContrastKey) // Aumentar contraste
-        filter.setValue(0.1, forKey: kCIInputBrightnessKey) // Aumentar brillo ligeramente
-        filter.setValue(1.1, forKey: kCIInputSaturationKey) // Aumentar saturación
-        
-        // Aplicar filtro
-        guard let outputImage = filter.outputImage,
-              let cgOutputImage = context.createCGImage(outputImage, from: outputImage.extent) else {
-            return image
-        }
-        
-        return UIImage(cgImage: cgOutputImage)
     }
-}
-
-struct AnatomicalSegment {
-    let id: String
-    let boundingBox: CGRect
-    let confidence: Float
-    let maskImage: UIImage?
 }

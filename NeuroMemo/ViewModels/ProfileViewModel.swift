@@ -77,7 +77,7 @@ class ProfileViewModel: ObservableObject {
         self.userDataManager = userDataManager
         
         // Inicializar valores
-        self.username = userDataManager.currentUser.username
+        self.username = userDataManager.currentUser.username // Asegurarse de que username se carga
         self.dailyNotificationsEnabled = UserDefaults.standard.bool(forKey: "dailyNotifications")
         self.preferredLanguage = UserDefaults.standard.string(forKey: "preferredLanguage") ?? "es"
         
@@ -293,9 +293,9 @@ class ProfileViewModel: ObservableObject {
     
     // Métodos privados auxiliares
     private func updateUserProfile() {
-        var updatedUser = userDataManager.currentUser
-        updatedUser.username = username
-        userDataManager.saveUserProgress(updatedUser)
+        // Actualizar directamente la propiedad en el manager
+        userDataManager.currentUser.username = username
+        userDataManager.saveUserProgress()
     }
     
     private func updateNotificationSettings() {

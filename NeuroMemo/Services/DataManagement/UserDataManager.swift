@@ -1,176 +1,279 @@
-// UserDataManager.swift
 import Foundation
-import Combine
+import CoreData
+import UserNotifications
 
 class UserDataManager {
     static let shared = UserDataManager()
     
-    private let coreDataManager = CoreDataManager.shared
-    private let userDefaultsKey = "com.neuromemo.userdata"
+    @Published var currentUser: UserProgress // Hacerlo @Published para que las vistas reaccionen
+    private let coreDataManager: CoreDataManager // Inyectar CoreDataManager
     
-    private var cancellables = Set<AnyCancellable>()
+    // Modificar inicializador para inyectar CoreDataManager
+    private init(coreDataManager: CoreDataManager = CoreDataManager.shared) {
+        self.coreDataManager = coreDataManager
+        // Cargar currentUser después de inicializar coreDataManager
+        self.currentUser = loadUserProgress() ?? UserProgress(userId: UUID().uuidString)
+    }
     
-    @Published var currentUser: UserProgress
+    // MARK: - User Progress Operations
     
-    private init() {
-        // Intentar cargar desde Core Data primero
-        if let savedUser = coreDataManager.fetchUserProgress() {
-            self.currentUser = savedUser
-        } else {
-            // Intentar cargar desde UserDefaults como respaldo
-            if let data = UserDefaults.standard.data(forKey: userDefaultsKey),
-               let decodedUser = try? JSONDecoder().decode(UserProgress.self, from: data) {
-                self.currentUser = decodedUser
+    func saveUserProgress(_ progressToSave: UserProgress? = nil) { // Permitir pasar un UserProgress específico
+        let userToSave = progressToSave ?? currentUser
+        let context = coreDataManager.viewContext // Usar instancia inyectada
+        
+        // Buscar si el usuario ya existe
+        let fetchRequest: NSFetchRequest<UserProgressEntity> = UserProgressEntity.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "userId == %@", userToSave.userId)
+        
+        do {
+            let results = try context.fetch(fetchRequest)
+            let userEntity: UserProgressEntity
+            
+            if let existingUser = results.first {
+                userEntity = existingUser
             } else {
-                // Crear nuevo usuario
-                self.currentUser = UserProgress(
-                    id: UUID().uuidString,
-                    username: "Usuario",
-                    studiedStructures: [],
-                    completedGames: [],
-                    studyStats: UserProgress.StudyStats(
-                        totalStudyTime: 0,
-                        correctAnswers: 0,
-                        incorrectAnswers: 0
-                    ),
-                    lastStudyDate: nil,
-                    streakDays: 0,
-                    achievements: []
-                )
+                userEntity = coreDataManager.create(UserProgressEntity.self) // Usar instancia inyectada
+                userEntity.userId = userToSave.userId
             }
-        }
-        
-        // Configurar guardado automático
-        setupAutoSave()
-    }
-    
-    private func setupAutoSave() {
-        $currentUser
-            .debounce(for: .seconds(1), scheduler: RunLoop.main)
-            .sink { [weak self] user in
-                self?.saveUserProgress(user)
+            
+            // Actualizar los datos básicos
+            userEntity.username = userToSave.username // Guardar username
+            userEntity.totalStudyTime = userToSave.totalStudyTime
+            userEntity.lastActiveDate = userToSave.lastActiveDate // Asegúrate que UserProgress tenga lastActiveDate
+            userEntity.selectedLanguage = userToSave.settings.language // Asegúrate que UserProgress tenga settings
+            userEntity.notificationsEnabled = userToSave.settings.notificationsEnabled // Asegúrate que UserProgress tenga settings
+            
+            // Estructuras estudiadas
+            let existingStudied = userEntity.studiedStructures as? Set<StudiedStructureEntity> ?? []
+            for existing in existingStudied {
+                userEntity.removeFromStudiedStructures(existing)
+                context.delete(existing)
             }
-            .store(in: &cancellables)
-    }
-    
-    func saveUserProgress(_ user: UserProgress) {
-        // Guardar en Core Data
-        coreDataManager.saveUserProgress(user)
-        
-        // Guardar en UserDefaults como respaldo
-        if let encoded = try? JSONEncoder().encode(user) {
-            UserDefaults.standard.set(encoded, forKey: userDefaultsKey)
-        }
-    }
-    
-    func recordStudySession(structures: [AnatomicalStructure], duration: TimeInterval) {
-        var updatedUser = currentUser
-        
-        // Actualizar estructuras estudiadas
-        for structure in structures {
-            if !updatedUser.studiedStructures.contains(where: { $0.id == structure.id }) {
-                updatedUser.studiedStructures.append(structure)
+            
+            for studied in userToSave.studiedStructures {
+                let studiedEntity = coreDataManager.create(StudiedStructureEntity.self) // Usar instancia inyectada
+                studiedEntity.structureId = studied.structureId
+                studiedEntity.timeStudied = studied.timeStudied
+                studiedEntity.lastReviewDate = studied.lastReviewDate
+                studiedEntity.confidenceLevel = Int16(studied.confidenceLevel)
+                userEntity.addToStudiedStructures(studiedEntity)
             }
-        }
-        
-        // Actualizar tiempo de estudio
-        updatedUser.studyStats.totalStudyTime += duration
-        
-        // Actualizar fecha de último estudio
-        let today = Date()
-        
-        // Calcular racha de días
-        if let lastDate = updatedUser.lastStudyDate {
-            let calendar = Calendar.current
-            if calendar.isDate(lastDate, inSameDayAs: today) {
-                // Ya estudiado hoy, no cambiar la racha
-            } else if let yesterdayDate = calendar.date(byAdding: .day, value: -1, to: today),
-                      calendar.isDate(lastDate, inSameDayAs: yesterdayDate) {
-                // Estudiado ayer, incrementar racha
-                updatedUser.streakDays += 1
-            } else {
-                // No estudiado ayer, reiniciar racha
-                updatedUser.streakDays = 1
+            
+            // Juegos completados
+            let existingGames = userEntity.completedGames as? Set<CompletedGameEntity> ?? []
+            for existing in existingGames {
+                userEntity.removeFromCompletedGames(existing)
+                context.delete(existing)
             }
-        } else {
-            // Primera vez estudiando, iniciar racha
-            updatedUser.streakDays = 1
-        }
-        
-        updatedUser.lastStudyDate = today
-        
-        // Actualizar usuario
-        currentUser = updatedUser
-    }
-    
-    func recordGameCompletion(game: CompletedGame) {
-        var updatedUser = currentUser
-        updatedUser.completedGames.append(game)
-        currentUser = updatedUser
-        
-        // Verificar y otorgar logros
-        checkAchievements()
-    }
-    
-    func recordQuizAnswer(correct: Bool) {
-        var updatedUser = currentUser
-        
-        if correct {
-            updatedUser.studyStats.correctAnswers += 1
-        } else {
-            updatedUser.studyStats.incorrectAnswers += 1
-        }
-        
-        currentUser = updatedUser
-    }
-    
-    private func checkAchievements() {
-        var newAchievements: [Achievement] = []
-        
-        // Logro: Primeros pasos
-        if currentUser.studiedStructures.count >= 5 &&
-           !currentUser.achievements.contains(where: { $0.id == "first_steps" }) {
-            newAchievements.append(Achievement(
-                id: "first_steps",
-                title: "Primeros pasos",
-                description: "Estudiar 5 estructuras anatómicas",
-                dateEarned: Date()
-            ))
-        }
-        
-        // Logro: Estudiante dedicado
-        if currentUser.streakDays >= 3 &&
-           !currentUser.achievements.contains(where: { $0.id == "dedicated_student" }) {
-            newAchievements.append(Achievement(
-                id: "dedicated_student",
-                title: "Estudiante dedicado",
-                description: "Estudiar 3 días seguidos",
-                dateEarned: Date()
-            ))
-        }
-        
-        // Añadir nuevos logros
-        if !newAchievements.isEmpty {
-            var updatedUser = currentUser
-            updatedUser.achievements.append(contentsOf: newAchievements)
-            currentUser = updatedUser
+            
+            for game in userToSave.completedGames {
+                let gameEntity = coreDataManager.create(CompletedGameEntity.self) // Usar instancia inyectada
+                gameEntity.gameId = game.gameId
+                gameEntity.gameType = game.gameType
+                gameEntity.completionDate = game.completionDate
+                gameEntity.score = game.score
+                gameEntity.timeSpent = game.timeSpent
+                userEntity.addToCompletedGames(gameEntity)
+            }
+            
+            // Logros
+            let existingAchievements = userEntity.achievements as? Set<AchievementEntity> ?? []
+            for existing in existingAchievements {
+                userEntity.removeFromAchievements(existing)
+                context.delete(existing)
+            }
+            
+            for achievement in userToSave.achievements {
+                let achievementEntity = coreDataManager.create(AchievementEntity.self) // Usar instancia inyectada
+                achievementEntity.achievementId = achievement.id
+                achievementEntity.name = achievement.name
+                achievementEntity.description = achievement.description
+                achievementEntity.dateUnlocked = achievement.dateUnlocked
+                userEntity.addToAchievements(achievementEntity)
+            }
+            
+            coreDataManager.saveContext() // Usar instancia inyectada
+            print("Progreso del usuario guardado correctamente")
+            
+            // Actualizar la instancia local si se guardó una diferente
+            if progressToSave != nil {
+                self.currentUser = userToSave
+            }
+            
+        } catch {
+            print("Error al guardar el progreso del usuario: \(error)")
         }
     }
     
+    func loadUserProgress() -> UserProgress? {
+        let fetchRequest: NSFetchRequest<UserProgressEntity> = UserProgressEntity.fetchRequest()
+        
+        do {
+            let results = try coreDataManager.viewContext.fetch(fetchRequest) // Usar instancia inyectada
+            
+            if let userEntity = results.first {
+                // Convertir desde Entity a nuestro modelo
+                let userId = userEntity.userId ?? ""
+                var userProgress = UserProgress(userId: userId)
+                
+                userProgress.username = userEntity.username ?? "Usuario" // Cargar username
+                userProgress.totalStudyTime = userEntity.totalStudyTime
+                userProgress.lastActiveDate = userEntity.lastActiveDate
+                
+                // Configurar ajustes (Asegúrate que UserProgress tenga 'settings')
+                userProgress.settings.language = userEntity.selectedLanguage ?? "es"
+                userProgress.settings.notificationsEnabled = userEntity.notificationsEnabled
+                
+                // Cargar estructuras estudiadas
+                if let studiedEntities = userEntity.studiedStructures as? Set<StudiedStructureEntity> {
+                    userProgress.studiedStructures = studiedEntities.map { entity in
+                        return StudiedStructure(
+                            structureId: entity.structureId ?? "",
+                            timeStudied: entity.timeStudied,
+                            lastReviewDate: entity.lastReviewDate ?? Date(),
+                            confidenceLevel: Int(entity.confidenceLevel)
+                        )
+                    }
+                }
+                
+                // Cargar juegos completados
+                if let gameEntities = userEntity.completedGames as? Set<CompletedGameEntity> {
+                    userProgress.completedGames = gameEntities.map { entity in
+                        return CompletedGame(
+                            gameId: entity.gameId ?? "",
+                            gameType: entity.gameType ?? "",
+                            completionDate: entity.completionDate ?? Date(),
+                            score: entity.score,
+                            timeSpent: entity.timeSpent
+                        )
+                    }
+                }
+                
+                // Cargar logros
+                if let achievementEntities = userEntity.achievements as? Set<AchievementEntity> {
+                    userProgress.achievements = achievementEntities.map { entity in
+                        return Achievement(
+                            id: entity.achievementId ?? "",
+                            name: entity.name ?? "",
+                            description: entity.description ?? "",
+                            dateUnlocked: entity.dateUnlocked
+                        )
+                    }
+                }
+                
+                return userProgress
+            }
+        } catch {
+            print("Error al cargar el progreso del usuario: \(error)")
+        }
+        
+        return nil
+    }
+    
+    // Añadir función para resetear progreso (usada en ProfileViewModel)
     func resetUserProgress() {
-        currentUser = UserProgress(
-            id: UUID().uuidString,
-            username: "Usuario",
-            studiedStructures: [],
-            completedGames: [],
-            studyStats: UserProgress.StudyStats(
-                totalStudyTime: 0,
-                correctAnswers: 0,
-                incorrectAnswers: 0
-            ),
-            lastStudyDate: nil,
-            streakDays: 0,
-            achievements: []
-        )
+        let initialProgress = UserProgress(userId: currentUser.userId)
+        saveUserProgress(initialProgress)
+        // Opcionalmente, eliminar todas las entidades relacionadas si es necesario
+        // coreDataManager.deleteAll(StudiedStructureEntity.self)
+        // coreDataManager.deleteAll(CompletedGameEntity.self)
+        // coreDataManager.deleteAll(AchievementEntity.self)
+    }
+    
+    // Añadir función para grabar respuesta de quiz (usada en GameViewModel)
+    func recordQuizAnswer(correct: Bool) {
+        // Aquí iría la lógica para actualizar estadísticas de aciertos/errores
+        // Por ejemplo, podrías tener propiedades en UserProgress o en GameStatistics
+        // currentUser.studyStats.correctAnswers += correct ? 1 : 0
+        // currentUser.studyStats.incorrectAnswers += correct ? 0 : 1
+        // saveUserProgress()
+        print("Respuesta registrada: \(correct ? "Correcta" : "Incorrecta")")
+    }
+    
+    // Añadir función para grabar juego completado (usada en GameViewModel)
+    func recordGameCompletion(game: CompletedGame) {
+        // Aquí iría la lógica para añadir el juego a la lista de juegos completados
+        // currentUser.completedGames.append(game)
+        // saveUserProgress()
+        print("Juego completado registrado: \(game.gameType) - Score: \(game.score)")
+    }
+
+    // MARK: - Estadísticas y seguimiento
+    
+    func recordStudySession(structureId: String, duration: TimeInterval) {
+        // Encontrar o crear una estructura estudiada
+        if let index = currentUser.studiedStructures.firstIndex(where: { $0.structureId == structureId }) {
+            currentUser.studiedStructures[index].timeStudied += duration
+            currentUser.studiedStructures[index].lastReviewDate = Date()
+        } else {
+            let newStructure = StudiedStructure(
+                structureId: structureId,
+                timeStudied: duration,
+                lastReviewDate: Date(),
+                confidenceLevel: 1
+            )
+            currentUser.studiedStructures.append(newStructure)
+        }
+        
+        // Actualizar tiempo total
+        currentUser.totalStudyTime += duration
+        currentUser.lastActiveDate = Date()
+        
+        // Guardar cambios
+        saveUserProgress()
+    }
+    
+    // MARK: - Configuración
+    
+    func updateNotificationSettings(enabled: Bool) {
+        currentUser.settings.notificationsEnabled = enabled
+        saveUserProgress()
+        
+        // Aquí implementar la solicitud de permisos con UserNotifications
+        if enabled {
+            let userNotificationCenter = UNUserNotificationCenter.current()
+            userNotificationCenter.requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+                if granted {
+                    print("Permisos de notificación concedidos")
+                    self.scheduleReminders()
+                } else if let error = error {
+                    print("Error al solicitar permisos: \(error.localizedDescription)")
+                }
+            }
+        } else {
+            // Cancelar todas las notificaciones programadas
+            UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        }
+    }
+    
+    private func scheduleReminders() {
+        // Programar recordatorios de estudio diarios
+        let content = UNMutableNotificationContent()
+        content.title = "Hora de estudiar"
+        content.body = "¡No olvides repasar las estructuras neuroanatómicas de hoy!"
+        content.sound = .default
+        
+        // Crear un disparador que se active todos los días a las 18:00
+        var dateComponents = DateComponents()
+        dateComponents.hour = 18
+        dateComponents.minute = 0
+        let trigger = UNCalendarNotificationTrigger(dateMatching: dateComponents, repeats: true)
+        
+        let request = UNNotificationRequest(identifier: "dailyStudyReminder", content: content, trigger: trigger)
+        UNUserNotificationCenter.current().add(request)
+    }
+    
+    func updateLanguageSettings(language: String) {
+        currentUser.settings.language = language
+        saveUserProgress()
+        
+        // Cambiar el idioma de la aplicación
+        // Esto requiere un mecanismo para reiniciar la UI o usar librerías de localización avanzadas
+        UserDefaults.standard.set([language], forKey: "AppleLanguages")
+        UserDefaults.standard.synchronize()
+        
+        // Normalmente, esto requeriría reiniciar la aplicación para que los cambios tengan efecto
+        // En una implementación real, podríamos mostrar un diálogo solicitando al usuario reiniciar
+        NotificationCenter.default.post(name: Notification.Name("LanguageChanged"), object: nil)
     }
 }

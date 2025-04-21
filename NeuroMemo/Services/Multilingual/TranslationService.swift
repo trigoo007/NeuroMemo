@@ -1,183 +1,196 @@
-// TranslationService.swift
 import Foundation
 
 enum TranslationError: Error {
-    case translationFailed
-    case unsupportedLanguage
+    case translationUnavailable
+    case invalidSourceLanguage
+    case invalidTargetLanguage
     case networkError
 }
 
 class TranslationService {
-    // Idiomas soportados
-    let supportedLanguages = ["es", "en", "la"] // Español, Inglés, Latín
+    static let shared = TranslationService()
     
-    // Traducciones en caché para términos comunes
-    private var translationCache: [String: [String: String]] = [:]
+    private let supportedLanguages = ["es", "en", "fr", "de", "it", "pt", "la"]
+    private var terminologyDictionaries: [String: [String: String]] = [:]
     
-    // Simulación de servicio de traducción
-    // En una app real, esto utilizaría un API de traducción
-    func translateTerm(_ term: String, from sourceLanguage: String, to targetLanguage: String) -> Result<String, Error> {
-        // Verificar que los idiomas están soportados
-        guard supportedLanguages.contains(sourceLanguage),
-              supportedLanguages.contains(targetLanguage) else {
-            return .failure(TranslationError.unsupportedLanguage)
+    private init() {
+        loadTerminologyDictionaries()
+    }
+    
+    /// Carga los diccionarios de terminología desde archivos JSON
+    private func loadTerminologyDictionaries() {
+        for language in supportedLanguages {
+            guard let url = Bundle.main.url(forResource: "Terminology_\(language)", withExtension: "json") else {
+                print("Advertencia: No se encontró el diccionario para el idioma \(language)")
+                continue
+            }
+            
+            do {
+                let data = try Data(contentsOf: url)
+                let decoder = JSONDecoder()
+                if let dictionary = try decoder.decode([String: String].self, from: data) {
+                    terminologyDictionaries[language] = dictionary
+                    print("Diccionario de terminología cargado para \(language): \(dictionary.count) términos")
+                }
+            } catch {
+                print("Error al cargar el diccionario para \(language): \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    /// Traduce un término anatómico de un idioma a otro
+    /// - Parameters:
+    ///   - term: El término a traducir
+    ///   - sourceLanguage: Código ISO del idioma de origen (ej: "es", "en")
+    ///   - targetLanguage: Código ISO del idioma de destino
+    ///   - completion: Callback con el resultado de la traducción
+    func translateTerm(_ term: String, from sourceLanguage: String, to targetLanguage: String, completion: @escaping (Result<String, Error>) -> Void) {
+        // Verificar que ambos idiomas estén soportados
+        guard supportedLanguages.contains(sourceLanguage) else {
+            completion(.failure(TranslationError.invalidSourceLanguage))
+            return
+        }
+        
+        guard supportedLanguages.contains(targetLanguage) else {
+            completion(.failure(TranslationError.invalidTargetLanguage))
+            return
         }
         
         // Si es el mismo idioma, devolver el término original
         if sourceLanguage == targetLanguage {
-            return .success(term)
+            completion(.success(term))
+            return
         }
         
-        // Verificar si tenemos traducción en caché
-        if let cachedTranslations = translationCache[term],
-           let translation = cachedTranslations[targetLanguage] {
-            return .success(translation)
-        }
-        
-        // Si no está en caché, buscar en el diccionario de términos
-        if let translation = lookupTermInDictionary(term, from: sourceLanguage, to: targetLanguage) {
-            // Guardar en caché
-            cacheTranslation(term, language: sourceLanguage, translation: translation, targetLanguage: targetLanguage)
-            return .success(translation)
-        }
-        
-        // Si no encontramos traducción, devolver el término original
-        return .success(term)
-    }
-    
-    // Traducir múltiples términos a la vez
-    func batchTranslate(_ terms: [String], from sourceLanguage: String, to targetLanguage: String) -> Result<[String: String], Error> {
-        var translations: [String: String] = [:]
-        
-        for term in terms {
-            let result = translateTerm(term, from: sourceLanguage, to: targetLanguage)
+        // Primero, intentamos una traducción directa desde nuestro diccionario especializado
+        if let sourceDictionary = terminologyDictionaries[sourceLanguage],
+           let targetDictionary = terminologyDictionaries[targetLanguage] {
             
-            switch result {
-            case .success(let translation):
-                translations[term] = translation
-            case .failure(let error):
-                return .failure(error)
-            }
-        }
-        
-        return .success(translations)
-    }
-    
-    // Guardar traducción en caché
-    private func cacheTranslation(_ term: String, language: String, translation: String, targetLanguage: String) {
-        if translationCache[term] == nil {
-            translationCache[term] = [:]
-        }
-        
-        translationCache[term]?[targetLanguage] = translation
-        
-        // También guardar la traducción inversa
-        if translationCache[translation] == nil {
-            translationCache[translation] = [:]
-        }
-        
-        translationCache[translation]?[language] = term
-    }
-    
-    // Buscar término en diccionario (simulado)
-    private func lookupTermInDictionary(_ term: String, from sourceLanguage: String, to targetLanguage: String) -> String? {
-        // Diccionario simplificado de términos anatómicos
-        let dictionary: [String: [String: String]] = [
-            // Español
-            "cerebro": ["en": "brain", "la": "cerebrum"],
-            "corazón": ["en": "heart", "la": "cor"],
-            "pulmón": ["en": "lung", "la": "pulmo"],
-            "hígado": ["en": "liver", "la": "hepar"],
-            "riñón": ["en": "kidney", "la": "ren"],
-            "estómago": ["en": "stomach", "la": "ventriculus"],
-            "intestino": ["en": "intestine", "la": "intestinum"],
-            "hueso": ["en": "bone", "la": "os"],
-            "músculo": ["en": "muscle", "la": "musculus"],
-            "nervio": ["en": "nerve", "la": "nervus"],
-            "arteria": ["en": "artery", "la": "arteria"],
-            "vena": ["en": "vein", "la": "vena"],
-            "neurona": ["en": "neuron", "la": "neuron"],
-            
-            // Inglés
-            "brain": ["es": "cerebro", "la": "cerebrum"],
-            "heart": ["es": "corazón", "la": "cor"],
-            "lung": ["es": "pulmón", "la": "pulmo"],
-            "liver": ["es": "hígado", "la": "hepar"],
-            "kidney": ["es": "riñón", "la": "ren"],
-            "stomach": ["es": "estómago", "la": "ventriculus"],
-            "intestine": ["es": "intestino", "la": "intestinum"],
-            "bone": ["es": "hueso", "la": "os"],
-            "muscle": ["es": "músculo", "la": "musculus"],
-            "nerve": ["es": "nervio", "la": "nervus"],
-            "artery": ["es": "arteria", "la": "arteria"],
-            "vein": ["es": "vena", "la": "vena"],
-            "neuron": ["es": "neurona", "la": "neuron"],
-            
-            // Latín
-            "cerebrum": ["es": "cerebro", "en": "brain"],
-            "cor": ["es": "corazón", "en": "heart"],
-            "pulmo": ["es": "pulmón", "en": "lung"],
-            "hepar": ["es": "hígado", "en": "liver"],
-            "ren": ["es": "riñón", "en": "kidney"],
-            "ventriculus": ["es": "estómago", "en": "stomach"],
-            "intestinum": ["es": "intestino", "en": "intestine"],
-            "os": ["es": "hueso", "en": "bone"],
-            "musculus": ["es": "músculo", "en": "muscle"],
-            "nervus": ["es": "nervio", "en": "nerve"],
-            "arteria": ["es": "arteria", "en": "artery"],
-            "vena": ["es": "vena", "en": "vein"],
-            "neuron": ["es": "neurona", "en": "neuron"]
-        ]
-        
-        // Buscar término en minúsculas
-        let lowerTerm = term.lowercased()
-        
-        if let translations = dictionary[lowerTerm],
-           let translation = translations[targetLanguage] {
-            // Preservar mayúsculas si el término original empieza por mayúscula
-            if term.first?.isUppercase == true {
-                return translation.prefix(1).uppercased() + translation.dropFirst()
-            }
-            return translation
-        }
-        
-        return nil
-    }
-    
-    // Traducir una descripción completa
-    func translateText(_ text: String, from sourceLanguage: String, to targetLanguage: String, completion: @escaping (Result<String, Error>) -> Void) {
-        // En una app real, esto utilizaría un API de traducción
-        // Por ahora, simulamos el proceso con un retraso
-        
-        DispatchQueue.global().async {
-            // Simulación de proceso de traducción
-            Thread.sleep(forTimeInterval: 0.5)
-            
-            // Traducción muy simplificada (solo para demostración)
-            var translatedText = text
-            
-            // Dividir el texto en palabras
-            let words = text.components(separatedBy: .whitespacesAndNewlines)
-            
-            for word in words {
-                let cleanWord = word.trimmingCharacters(in: .punctuationCharacters).lowercased()
-                
-                if !cleanWord.isEmpty {
-                    let result = self.translateTerm(cleanWord, from: sourceLanguage, to: targetLanguage)
-                    
-                    if case .success(let translation) = result, translation != cleanWord {
-                        // Reemplazar la palabra manteniendo puntuación y mayúsculas
-                        let range = translatedText.range(of: word)
-                        if let range = range {
-                            translatedText.replaceSubrange(range, with: translation)
-                        }
-                    }
+            // Buscar la clave estándar (en inglés generalmente) para este término
+            if let standardKey = sourceDictionary.first(where: { $0.value.lowercased() == term.lowercased() })?.key {
+                // Usar la clave estándar para buscar en el diccionario destino
+                if let translation = targetDictionary[standardKey] {
+                    completion(.success(translation))
+                    return
                 }
+            }
+        }
+        
+        // Si no tenemos una traducción directa, podemos usar una API online como fallback
+        translateUsingOnlineService(term, from: sourceLanguage, to: targetLanguage) { result in
+            completion(result)
+        }
+    }
+    
+    /// Traduce un término anatómico usando un servicio online (fallback)
+    private func translateUsingOnlineService(_ term: String, from sourceLanguage: String, to targetLanguage: String, completion: @escaping (Result<String, Error>) -> Void) {
+        // En una implementación real, aquí se usaría una API de traducción
+        // como Google Translate, DeepL, Azure Translator, etc.
+        
+        // Ejemplo simulado con un retardo para simular una llamada a la red
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+            // Simular una traducción básica para propósitos de demostración
+            // En una app real, implementar la llamada a la API correspondiente
+            let simulatedTranslation: String
+            
+            if term.lowercased() == "cerebro" && sourceLanguage == "es" && targetLanguage == "en" {
+                simulatedTranslation = "brain"
+            } else if term.lowercased() == "brain" && sourceLanguage == "en" && targetLanguage == "es" {
+                simulatedTranslation = "cerebro"
+            } else {
+                // Simular una traducción añadiendo un sufijo
+                simulatedTranslation = "\(term)_\(targetLanguage)"
             }
             
             DispatchQueue.main.async {
-                completion(.success(translatedText))
+                completion(.success(simulatedTranslation))
             }
         }
+    }
+    
+    /// Traduce la descripción completa de una estructura anatómica
+    func translateStructureDescription(_ structure: AnatomicalStructure, to targetLanguage: String, completion: @escaping (Result<AnatomicalStructure, Error>) -> Void) {
+        // Asumimos que las estructuras están originalmente en español
+        let sourceLanguage = "es"
+        
+        // Evitar traducción innecesaria si ya está en el idioma objetivo
+        if sourceLanguage == targetLanguage {
+            completion(.success(structure))
+            return
+        }
+        
+        // Crear grupo de espera para todas las traducciones
+        let dispatchGroup = DispatchGroup()
+        
+        // Variables mutables para almacenar los resultados de traducción
+        var translatedName = structure.name
+        var translatedDescription = structure.description
+        var translatedLatinName = structure.latinName
+        var translatedError: Error?
+        
+        // Traducir nombre
+        dispatchGroup.enter()
+        translateTerm(structure.name, from: sourceLanguage, to: targetLanguage) { result in
+            switch result {
+            case .success(let translated):
+                translatedName = translated
+            case .failure(let error):
+                translatedError = error
+            }
+            dispatchGroup.leave()
+        }
+        
+        // Traducir descripción (frases más largas)
+        dispatchGroup.enter()
+        translateUsingOnlineService(structure.description, from: sourceLanguage, to: targetLanguage) { result in
+            switch result {
+            case .success(let translated):
+                translatedDescription = translated
+            case .failure(let error):
+                translatedError = error
+            }
+            dispatchGroup.leave()
+        }
+        
+        // Nombre en latín generalmente no se traduce, pero podría adaptarse según convenciones locales
+        if let latinName = structure.latinName {
+            dispatchGroup.enter()
+            translateTerm(latinName, from: "la", to: targetLanguage) { result in
+                switch result {
+                case .success(let translated):
+                    translatedLatinName = translated
+                case .failure:
+                    // Mantener el nombre en latín original si falla la traducción
+                    translatedLatinName = latinName
+                }
+                dispatchGroup.leave()
+            }
+        }
+        
+        // Cuando todas las traducciones terminen
+        dispatchGroup.notify(queue: .main) {
+            if let error = translatedError {
+                completion(.failure(error))
+                return
+            }
+            
+            // Crear una copia de la estructura con los campos traducidos
+            var translatedStructure = structure
+            translatedStructure.name = translatedName
+            translatedStructure.description = translatedDescription
+            translatedStructure.latinName = translatedLatinName
+            
+            completion(.success(translatedStructure))
+        }
+    }
+    
+    /// Verifica si un idioma está soportado
+    func isLanguageSupported(_ languageCode: String) -> Bool {
+        return supportedLanguages.contains(languageCode)
+    }
+    
+    /// Obtiene la lista de idiomas soportados
+    func getSupportedLanguages() -> [String] {
+        return supportedLanguages
     }
 }

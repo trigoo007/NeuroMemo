@@ -1,220 +1,252 @@
-// SpeechProcessor.swift
 import Foundation
-import AVFoundation
 import Speech
 
-enum SpeechProcessorError: Error {
+enum SpeechProcessingError: Error {
     case recognitionNotAvailable
-    case recordingError
-    case processingError(String)
     case permissionDenied
-    case noAudioData
+    case processingFailed
+    case commandNotRecognized
+    case audioSessionError
 }
 
-class SpeechProcessor {
-    private let whisperService: WhisperService
+class SpeechProcessor: NSObject, SFSpeechRecognizerDelegate {
+    static let shared = SpeechProcessor()
+    
     private let speechRecognizer: SFSpeechRecognizer?
     private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     private var recognitionTask: SFSpeechRecognitionTask?
     private let audioEngine = AVAudioEngine()
     
-    // Estado
-    private var isRecording = false
-    private var isProcessing = false
+    private var commandCallback: ((Result<VoiceCommand, Error>) -> Void)?
     
-    // Configuración
-    private let useWhisper: Bool
-    private let language: String
-    
-    init(language: String = "es-ES", useWhisper: Bool = true) {
-        self.language = language
-        self.useWhisper = useWhisper
-        self.whisperService = WhisperService()
+    // Comandos de voz reconocibles
+    struct VoiceCommand {
+        let type: CommandType
+        let parameters: [String: Any]
         
-        // Configurar reconocedor de voz de Apple
-        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: language))
-    }
-    
-    func startRecording(completion: @escaping (Result<String, Error>) -> Void) {
-        // Verificar si ya está grabando
-        guard !isRecording else {
-            completion(.failure(SpeechProcessorError.recordingError))
-            return
-        }
-        
-        // Verificar disponibilidad y permisos
-        if useWhisper {
-            // Usar servicio Whisper
-            whisperService.startRecording { result in
-                completion(result)
-            }
-        } else {
-            // Usar reconocimiento de voz nativo
-            startSpeechRecognition(completion: completion)
+        enum CommandType: String {
+            case search = "buscar"
+            case navigate = "ir a"
+            case select = "seleccionar"
+            case showInfo = "información"
+            case zoomIn = "ampliar"
+            case zoomOut = "reducir"
+            case startQuiz = "comenzar cuestionario"
+            case unknown = "desconocido"
         }
     }
     
-    func stopRecording() {
-        if useWhisper {
-            whisperService.stopRecording()
-        } else {
-            stopSpeechRecognition()
-        }
-        
-        isRecording = false
+    private override init() {
+        // Inicializar con el reconocedor del idioma español
+        self.speechRecognizer = SFSpeechRecognizer(locale: Locale(identifier: "es-ES"))
+        super.init()
+        self.speechRecognizer?.delegate = self
     }
     
-    // MARK: - Reconocimiento de voz nativo de Apple
+    // MARK: - Control de Reconocimiento
     
-    private func startSpeechRecognition(completion: @escaping (Result<String, Error>) -> Void) {
+    func startListening(completion: @escaping (Result<VoiceCommand, Error>) -> Void) {
         // Verificar disponibilidad
         guard let speechRecognizer = speechRecognizer, speechRecognizer.isAvailable else {
-            completion(.failure(SpeechProcessorError.recognitionNotAvailable))
+            completion(.failure(SpeechProcessingError.recognitionNotAvailable))
             return
         }
         
-        // Verificar autorización
-        SFSpeechRecognizer.requestAuthorization { status in
-            switch status {
-            case .authorized:
-                self.setupAudioSession()
-                self.setupRecognition(completion: completion)
-            case .denied, .restricted:
-                completion(.failure(SpeechProcessorError.permissionDenied))
-            case .notDetermined:
-                completion(.failure(SpeechProcessorError.permissionDenied))
-            @unknown default:
-                completion(.failure(SpeechProcessorError.permissionDenied))
+        // Solicitar permisos
+        SFSpeechRecognizer.requestAuthorization { [weak self] status in
+            guard let self = self else { return }
+            
+            DispatchQueue.main.async {
+                switch status {
+                case .authorized:
+                    self.startRecognition(completion: completion)
+                case .denied:
+                    completion(.failure(SpeechProcessingError.permissionDenied))
+                case .restricted, .notDetermined:
+                    completion(.failure(SpeechProcessingError.permissionDenied))
+                @unknown default:
+                    completion(.failure(SpeechProcessingError.permissionDenied))
+                }
             }
         }
     }
     
-    private func setupAudioSession() {
+    private func startRecognition(completion: @escaping (Result<VoiceCommand, Error>) -> Void) {
+        // Cancelar cualquier reconocimiento previo
+        if recognitionTask != nil {
+            recognitionTask?.cancel()
+            recognitionTask = nil
+        }
+        
+        self.commandCallback = completion
+        
+        // Configurar sesión de audio
+        let audioSession = AVAudioSession.sharedInstance()
         do {
-            let audioSession = AVAudioSession.sharedInstance()
             try audioSession.setCategory(.record, mode: .measurement, options: .duckOthers)
             try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            print("Error configurando sesión de audio: \(error)")
-        }
-    }
-    
-    private func setupRecognition(completion: @escaping (Result<String, Error>) -> Void) {
-        // Crear y configurar la petición de reconocimiento
-        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
-        
-        guard let recognitionRequest = recognitionRequest else {
-            completion(.failure(SpeechProcessorError.processingError("No se pudo crear la petición de reconocimiento")))
+            completion(.failure(SpeechProcessingError.audioSessionError))
             return
         }
         
+        // Crear y configurar el reconocimiento
+        recognitionRequest = SFSpeechAudioBufferRecognitionRequest()
+        
+        guard let recognitionRequest = recognitionRequest else {
+            completion(.failure(SpeechProcessingError.processingFailed))
+            return
+        }
+        
+        // Configurar para reconocimiento continuo (en tiempo real)
         recognitionRequest.shouldReportPartialResults = true
         
-        // Configurar entrada de audio
+        // Configurar el micrófono
         let inputNode = audioEngine.inputNode
+        let recordingFormat = inputNode.outputFormat(forBus: 0)
         
-        // Iniciar reconocimiento
-        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { result, error in
-            var isFinal = false
+        // Instalar el tap para capturar audio
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { [weak self] (buffer, _) in
+            self?.recognitionRequest?.append(buffer)
+        }
+        
+        // Iniciar el motor de audio
+        audioEngine.prepare()
+        
+        do {
+            try audioEngine.start()
+        } catch {
+            completion(.failure(SpeechProcessingError.audioSessionError))
+            return
+        }
+        
+        // Iniciar el reconocimiento
+        recognitionTask = speechRecognizer?.recognitionTask(with: recognitionRequest) { [weak self] (result, error) in
+            guard let self = self else { return }
+            
+            if let error = error {
+                self.stopListening()
+                self.commandCallback?(.failure(error))
+                return
+            }
             
             if let result = result {
-                // Procesar resultado parcial
+                // Procesar el texto reconocido para extraer comandos
                 let recognizedText = result.bestTranscription.formattedString
-                isFinal = result.isFinal
                 
-                if isFinal {
-                    completion(.success(recognizedText))
+                // Si el resultado es final o si detectamos un comando, procesarlo
+                if result.isFinal || self.containsCommand(recognizedText) {
+                    self.processRecognizedSpeech(recognizedText)
                 }
             }
-            
-            if error != nil || isFinal {
-                // Detener audio engine
-                self.audioEngine.stop()
-                inputNode.removeTap(onBus: 0)
-                
-                self.recognitionRequest = nil
-                self.recognitionTask = nil
-                
-                if !isFinal {
-                    completion(.failure(error ?? SpeechProcessorError.processingError("Error desconocido")))
-                }
-            }
-        }
-        
-        // Configurar buffer de audio
-        let recordingFormat = inputNode.outputFormat(forBus: 0)
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: recordingFormat) { buffer, _ in
-            self.recognitionRequest?.append(buffer)
-        }
-        
-        // Iniciar motor de audio
-        do {
-            audioEngine.prepare()
-            try audioEngine.start()
-            isRecording = true
-        } catch {
-            completion(.failure(error))
         }
     }
     
-    private func stopSpeechRecognition() {
+    func stopListening() {
         audioEngine.stop()
+        audioEngine.inputNode.removeTap(onBus: 0)
         recognitionRequest?.endAudio()
-        
-        if let inputNode = audioEngine.inputNode as AVAudioNode? {
-            inputNode.removeTap(onBus: 0)
-        }
-        
         recognitionTask?.cancel()
-        recognitionTask = nil
+        
+        // Limpiar
         recognitionRequest = nil
+        recognitionTask = nil
+        
+        // Desactivar sesión de audio
+        try? AVAudioSession.sharedInstance().setActive(false)
     }
     
-    // MARK: - Procesamiento de texto reconocido
+    // MARK: - Procesamiento de Comandos
     
-    func processRecognizedText(_ text: String, forMedicalContext: Bool = true) -> String {
-        var processedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Verifica si el texto contiene algún comando conocido
+    private func containsCommand(_ text: String) -> Bool {
+        let lowercasedText = text.lowercased()
         
-        if forMedicalContext {
-            // Convertir a términos médicos correctos
-            processedText = correctMedicalTerms(processedText)
-        }
+        // Lista de prefijos de comando
+        let commandPrefixes = ["buscar", "ir a", "seleccionar", "información", "ampliar", "reducir", "comenzar"]
         
-        return processedText
-    }
-    
-    private func correctMedicalTerms(_ text: String) -> String {
-        // Ejemplo de correcciones específicas para términos médicos
-        // En una implementación real, esto usaría un diccionario más completo
-        var correctedText = text
-        
-        let corrections = [
-            "hipocampo": "hipocampo",
-            "ipocampo": "hipocampo",
-            "talámo": "tálamo",
-            "talamo": "tálamo",
-            "hipotalamo": "hipotálamo",
-            "hypotalamo": "hipotálamo",
-            "bulbo raquidio": "bulbo raquídeo",
-            "cerebelo": "cerebelo",
-            "serebelo": "cerebelo",
-            "cortex": "córtex",
-            "corteza": "córtex"
-        ]
-        
-        for (incorrect, correct) in corrections {
-            // Usar expresión regular para encontrar palabras completas
-            let pattern = "\\b\(incorrect)\\b"
-            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                correctedText = regex.stringByReplacingMatches(
-                    in: correctedText,
-                    options: [],
-                    range: NSRange(location: 0, length: correctedText.utf16.count),
-                    withTemplate: correct
-                )
+        for prefix in commandPrefixes {
+            if lowercasedText.contains(prefix) {
+                return true
             }
         }
         
-        return correctedText
+        return false
+    }
+    
+    /// Procesa el texto reconocido para extraer comandos y parámetros
+    private func processRecognizedSpeech(_ text: String) {
+        let lowercasedText = text.lowercased()
+        
+        // Intentar identificar el tipo de comando
+        var commandType: VoiceCommand.CommandType = .unknown
+        var parameters: [String: Any] = [:]
+        
+        // Buscar comandos conocidos
+        if lowercasedText.contains("buscar") {
+            commandType = .search
+            // Extraer el término de búsqueda (todo lo que viene después de "buscar")
+            if let searchTerm = extractParameter(after: "buscar", in: lowercasedText) {
+                parameters["searchTerm"] = searchTerm
+            }
+        } else if lowercasedText.contains("ir a") {
+            commandType = .navigate
+            if let destination = extractParameter(after: "ir a", in: lowercasedText) {
+                parameters["destination"] = destination
+            }
+        } else if lowercasedText.contains("seleccionar") {
+            commandType = .select
+            if let item = extractParameter(after: "seleccionar", in: lowercasedText) {
+                parameters["item"] = item
+            }
+        } else if lowercasedText.contains("información") {
+            commandType = .showInfo
+            if let subject = extractParameter(after: "información", in: lowercasedText) {
+                parameters["subject"] = subject
+            }
+        } else if lowercasedText.contains("ampliar") {
+            commandType = .zoomIn
+        } else if lowercasedText.contains("reducir") {
+            commandType = .zoomOut
+        } else if lowercasedText.contains("comenzar cuestionario") {
+            commandType = .startQuiz
+            // Posibles parámetros: dificultad, tema, etc.
+            if lowercasedText.contains("fácil") {
+                parameters["difficulty"] = "easy"
+            } else if lowercasedText.contains("difícil") {
+                parameters["difficulty"] = "hard"
+            }
+        }
+        
+        // Crear el comando de voz
+        let command = VoiceCommand(type: commandType, parameters: parameters)
+        
+        // Detener la escucha y notificar el comando reconocido
+        stopListening()
+        
+        if commandType != .unknown {
+            commandCallback?(.success(command))
+        } else {
+            commandCallback?(.failure(SpeechProcessingError.commandNotRecognized))
+        }
+    }
+    
+    /// Extrae un parámetro después de un prefijo en el texto
+    private func extractParameter(after prefix: String, in text: String) -> String? {
+        guard let range = text.range(of: prefix) else { return nil }
+        
+        let startIndex = range.upperBound
+        let parameter = text[startIndex...].trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return parameter.isEmpty ? nil : parameter
+    }
+    
+    // MARK: - SFSpeechRecognizerDelegate
+    
+    func speechRecognizer(_ speechRecognizer: SFSpeechRecognizer, availabilityDidChange available: Bool) {
+        if !available {
+            stopListening()
+            commandCallback?(.failure(SpeechProcessingError.recognitionNotAvailable))
+        }
     }
 }

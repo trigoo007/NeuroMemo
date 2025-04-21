@@ -1,0 +1,68 @@
+
+[
+  {
+    "id": "cerebrum",
+    "name": "Cerebro",
+    "description": "El cerebro es el centro del sistema nervioso central y es el órgano más complejo del cuerpo humano.",
+    "system": "Sistema Nervioso Central",
+    "level": 2,
+    "latinName": "Cerebrum",
+    "synonyms": ["Telencéfalo", "Encéfalo anterosuperior"],
+    "imageReferences": ["cerebrum_lateral", "cerebrum_medial"],
+    "tags": ["corteza", "hemisferios", "lóbulos"],
+    "difficulty": 3,
+    "importance": 5
+  },
+  {
+    "id": "cerebellum",
+    "name": "Cerebelo",
+    "description": "El cerebelo es una región del encéfalo cuya función principal es la de integrar las vías sensitivas y las vías motoras.",
+    "system": "Sistema Nervioso Central",
+    "level": 2,
+    "latinName": "Cerebellum",
+    "synonyms": ["Encéfalo posterior"],
+    "imageReferences": ["cerebellum_dorsal", "cerebellum_sagittal"],
+    "tags": ["coordinación", "equilibrio", "motor"],
+    "difficulty": 3,
+    "importance": 4
+  },
+  {
+    "id": "brainstem",
+    "name": "Tronco encefálico",
+    "description": "El tronco encefálico es la porción del encéfalo que conecta la médula espinal con el cerebro.",
+    "system": "Sistema Nervioso Central",
+    "level": 2,
+    "latinName": "Truncus encephali",
+    "synonyms": ["Tallo cerebral"],
+    "imageReferences": ["brainstem_anterior", "brainstem_posterior"],
+    "tags": ["mesencéfalo", "puente", "bulbo raquídeo"],
+    "difficulty": 4,
+    "importance": 4
+  },
+  {
+    "id": "hippocampus",
+    "name": "Hipocampo",
+    "description": "El hipocampo es una estructura ubicada en el lóbulo temporal medial del cerebro y forma parte del sistema límbico.",
+    "system": "Sistema Límbico",
+    "level": 3,
+    "latinName": "Hippocampus",
+    "synonyms": ["Formación hipocampal"],
+    "imageReferences": ["hippocampus_coronal", "hippocampus_3d"],
+    "tags": ["memoria", "aprendizaje", "sistema límbico"],
+    "difficulty": 4,
+    "importance": 4
+  },
+  {
+    "id": "thalamus",
+    "name": "Tálamo",
+    "description": "El tálamo es una estructura neuronal que se origina en el diencéfalo, ubicada entre la corteza cerebral y el mesencéfalo.",
+    "system": "Sistema Nervioso Central",
+    "level": 3,
+    "latinName": "Thalamus",
+    "synonyms": ["Tálamo dorsal"],
+    "imageReferences": ["thalamus_axial", "thalamus_coronal"],
+    "tags": ["sensorial", "motor", "regulación"],
+    "difficulty": 3,
+    "importance": 4
+  }
+]

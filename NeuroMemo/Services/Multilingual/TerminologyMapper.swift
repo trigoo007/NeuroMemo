@@ -1,170 +1,161 @@
-// TerminologyMapper.swift
 import Foundation
 
 class TerminologyMapper {
-    // Tipos de terminología
-    enum TerminologyType: String {
-        case standard = "standard"
-        case clinical = "clinical"
-        case academic = "academic"
-        case simplified = "simplified"
+    static let shared = TerminologyMapper()
+    
+    // Diccionario de mapeo para normalizar variaciones terminológicas
+    private var terminologyMap: [String: String] = [:]
+    // Mapa inverso para búsquedas rápidas
+    private var reverseMap: [String: Set<String>] = [:]
+    
+    private init() {
+        loadTerminologyMaps()
     }
     
-    // Mapeo de términos según el tipo de terminología
-    private var terminologyMappings: [String: [TerminologyType: String]] = [
-        // Sistema nervioso
-        "cerebro": [
-            .standard: "cerebro",
-            .clinical: "encéfalo",
-            .academic: "encephalon",
-            .simplified: "cerebro"
-        ],
-        "nervio": [
-            .standard: "nervio",
-                        .clinical: "nervio periférico",
-                        .academic: "nervus",
-                        .simplified: "nervio"
-                    ],
-                    "neurona": [
-                        .standard: "neurona",
-                        .clinical: "célula nerviosa",
-                        .academic: "neuron",
-                        .simplified: "célula del cerebro"
-                    ],
-                    "médula espinal": [
-                        .standard: "médula espinal",
-                        .clinical: "médula espinal",
-                        .academic: "medulla spinalis",
-                        .simplified: "médula"
-                    ],
-                    "cerebelo": [
-                        .standard: "cerebelo",
-                        .clinical: "cerebelo",
-                        .academic: "cerebellum",
-                        .simplified: "parte posterior del cerebro"
-                    ],
-                    "hipocampo": [
-                        .standard: "hipocampo",
-                        .clinical: "hipocampo",
-                        .academic: "hippocampus",
-                        .simplified: "centro de memoria"
-                    ],
-                    
-                    // Sistema cardiovascular
-                    "corazón": [
-                        .standard: "corazón",
-                        .clinical: "corazón",
-                        .academic: "cor",
-                        .simplified: "corazón"
-                    ],
-                    "arteria": [
-                        .standard: "arteria",
-                        .clinical: "arteria",
-                        .academic: "arteria",
-                        .simplified: "vaso sanguíneo que sale del corazón"
-                    ],
-                    "vena": [
-                        .standard: "vena",
-                        .clinical: "vena",
-                        .academic: "vena",
-                        .simplified: "vaso sanguíneo que va al corazón"
-                    ],
-                    
-                    // Sistema digestivo
-                    "estómago": [
-                        .standard: "estómago",
-                        .clinical: "estómago",
-                        .academic: "ventriculus",
-                        .simplified: "estómago"
-                    ],
-                    "hígado": [
-                        .standard: "hígado",
-                        .clinical: "hígado",
-                        .academic: "hepar",
-                        .simplified: "hígado"
-                    ],
-                    "intestino": [
-                        .standard: "intestino",
-                        .clinical: "intestino",
-                        .academic: "intestinum",
-                        .simplified: "intestino"
-                    ]
-                ]
-                
-                // Preferencia de terminología del usuario
-                private var preferredTerminology: TerminologyType = .standard
-                
-                // Establecer preferencia de terminología
-                func setPreferredTerminology(_ type: TerminologyType) {
-                    preferredTerminology = type
+    /// Carga los mapas de terminología desde archivos de recursos
+    private func loadTerminologyMaps() {
+        guard let url = Bundle.main.url(forResource: "TerminologyStandardization", withExtension: "json") else {
+            print("Advertencia: No se encontró el archivo TerminologyStandardization.json")
+            loadDefaultMappings()
+            return
+        }
+        
+        do {
+            let data = try Data(contentsOf: url)
+            let decoder = JSONDecoder()
+            let mappings = try decoder.decode([String: String].self, from: data)
+            
+            self.terminologyMap = mappings
+            
+            // Construir mapa inverso
+            for (variant, standard) in mappings {
+                if reverseMap[standard] == nil {
+                    reverseMap[standard] = []
                 }
-                
-                // Obtener término según la preferencia del usuario
-                func getPreferredTerm(for standardTerm: String) -> String {
-                    if let mappings = terminologyMappings[standardTerm.lowercased()],
-                       let term = mappings[preferredTerminology] {
-                        return term
-                    }
-                    
-                    // Si no se encuentra mapeo, devolver el término original
-                    return standardTerm
-                }
-                
-                // Convertir texto completo a la terminología preferida
-                func convertTextToPreferredTerminology(_ text: String) -> String {
-                    var convertedText = text
-                    
-                    // Ordenar términos por longitud (de mayor a menor) para evitar reemplazos parciales
-                    let sortedTerms = terminologyMappings.keys.sorted(by: { $0.count > $1.count })
-                    
-                    for term in sortedTerms {
-                        if let mappings = terminologyMappings[term],
-                           let preferredTerm = mappings[preferredTerminology] {
-                            
-                            // Crear expresión regular para reemplazar palabras completas
-                            let pattern = "\\b\(term)\\b"
-                            
-                            if let regex = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) {
-                                let range = NSRange(location: 0, length: convertedText.utf16.count)
-                                
-                                // Aplicar reemplazo
-                                convertedText = regex.stringByReplacingMatches(
-                                    in: convertedText,
-                                    options: [],
-                                    range: range,
-                                    withTemplate: preferredTerm
-                                )
-                            }
-                        }
-                    }
-                    
-                    return convertedText
-                }
-                
-                // Convertir un término a todas las terminologías disponibles
-                func getAllTerminologies(for term: String) -> [TerminologyType: String] {
-                    if let mappings = terminologyMappings[term.lowercased()] {
-                        return mappings
-                    }
-                    
-                    // Si no se encuentra, devolver el mismo término para todas las terminologías
-                    var result: [TerminologyType: String] = [:]
-                    for type in TerminologyType.allCases {
-                        result[type] = term
-                    }
-                    return result
-                }
-                
-                // Agregar un nuevo término al mapeo
-                func addTermMapping(_ term: String, mappings: [TerminologyType: String]) {
-                    terminologyMappings[term.lowercased()] = mappings
-                }
-                
-                // Verificar si un término tiene mapeo
-                func hasMapping(for term: String) -> Bool {
-                    return terminologyMappings[term.lowercased()] != nil
-                }
+                reverseMap[standard]?.insert(variant)
             }
-
-            // Extensión para hacer TerminologyType un caso iterable
-            extension TerminologyMapper.TerminologyType: CaseIterable {}
+            
+            print("Mapa de terminología cargado: \(terminologyMap.count) términos")
+        } catch {
+            print("Error al cargar el mapa de terminología: \(error.localizedDescription)")
+            loadDefaultMappings()
+        }
+    }
+    
+    /// Carga un conjunto predeterminado de mapeos de terminología
+    private func loadDefaultMappings() {
+        // Algunos mapeos básicos como ejemplo
+        let defaultMappings: [String: String] = [
+            // Variaciones en español
+            "nervio optico": "nervio óptico",
+            "medula espinal": "médula espinal",
+            "bulbo raquideo": "bulbo raquídeo",
+            "lobulo frontal": "lóbulo frontal",
+            "lobulo occipital": "lóbulo occipital",
+            "lobulo parietal": "lóbulo parietal",
+            "lobulo temporal": "lóbulo temporal",
+            // Variaciones comunes por errores ortográficos
+            "hipotalamo": "hipotálamo",
+            "talamo": "tálamo",
+            "hipofisis": "hipófisis",
+            "hipocampo": "hipocampo",
+            "amigdala": "amígdala"
+        ]
+        
+        self.terminologyMap = defaultMappings
+        
+        // Construir mapa inverso
+        for (variant, standard) in defaultMappings {
+            if reverseMap[standard] == nil {
+                reverseMap[standard] = []
+            }
+            reverseMap[standard]?.insert(variant)
+        }
+        
+        print("Mapa de terminología por defecto cargado: \(terminologyMap.count) términos")
+    }
+    
+    /// Normaliza un término anatómico según los estándares
+    /// - Parameter term: Término a normalizar
+    /// - Returns: Término normalizado según los estándares establecidos
+    func standardizeTerm(_ term: String) -> String {
+        // Normalizar a minúsculas para la búsqueda
+        let normalizedTerm = term.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        // Buscar en el mapa de terminología
+        if let standardizedTerm = terminologyMap[normalizedTerm] {
+            return standardizedTerm
+        }
+        
+        // Si no hay una coincidencia exacta, buscar coincidencias parciales
+        for (variant, standard) in terminologyMap {
+            if normalizedTerm.contains(variant) {
+                // Reemplazar solo la parte coincidente
+                return normalizedTerm.replacingOccurrences(of: variant, with: standard)
+            }
+        }
+        
+        // Si no se encuentra, devolver el término original
+        return term
+    }
+    
+    /// Obtiene todas las variaciones conocidas de un término estándar
+    /// - Parameter standardTerm: Término estándar
+    /// - Returns: Conjunto de variaciones conocidas
+    func getVariations(for standardTerm: String) -> Set<String> {
+        let normalizedTerm = standardTerm.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        return reverseMap[normalizedTerm] ?? []
+    }
+    
+    /// Verifica si un término es una variación conocida
+    /// - Parameter term: Término a verificar
+    /// - Returns: Booleano indicando si es una variación conocida
+    func isKnownVariation(_ term: String) -> Bool {
+        let normalizedTerm = term.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        return terminologyMap[normalizedTerm] != nil
+    }
+    
+    /// Busca términos estándar que coincidan parcialmente con una consulta
+    /// - Parameter query: Consulta de búsqueda
+    /// - Returns: Lista de términos estándar que coinciden parcialmente
+    func findMatchingTerms(for query: String) -> [String] {
+        let normalizedQuery = query.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        var results = Set<String>()
+        
+        // Buscar en términos estándar
+        for standard in reverseMap.keys {
+            if standard.contains(normalizedQuery) || normalizedQuery.contains(standard) {
+                results.insert(standard)
+            }
+        }
+        
+        // Buscar en variaciones
+        for (variant, standard) in terminologyMap {
+            if variant.contains(normalizedQuery) || normalizedQuery.contains(variant) {
+                results.insert(standard)
+            }
+        }
+        
+        return Array(results).sorted()
+    }
+    
+    /// Añade un nuevo mapeo de terminología
+    /// - Parameters:
+    ///   - variant: Variación del término
+    ///   - standard: Término estándar
+    func addTerminologyMapping(variant: String, standard: String) {
+        let normalizedVariant = variant.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedStandard = standard.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        
+        terminologyMap[normalizedVariant] = normalizedStandard
+        
+        if reverseMap[normalizedStandard] == nil {
+            reverseMap[normalizedStandard] = []
+        }
+        reverseMap[normalizedStandard]?.insert(normalizedVariant)
+        
+        // En una implementación real, aquí también guardaríamos los cambios
+        // en un archivo persistente o base de datos
+    }
+}

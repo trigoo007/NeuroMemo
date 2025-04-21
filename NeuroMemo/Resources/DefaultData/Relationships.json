@@ -1,0 +1,38 @@
+
+[
+  {
+    "id": "rel1",
+    "sourceId": "cerebrum",
+    "targetId": "thalamus",
+    "type": "partOf",
+    "description": "El tálamo forma parte del cerebro y se ubica profundamente en sus estructuras."
+  },
+  {
+    "id": "rel2",
+    "sourceId": "cerebrum",
+    "targetId": "hippocampus",
+    "type": "partOf",
+    "description": "El hipocampo es una estructura que se encuentra en el lóbulo temporal del cerebro."
+  },
+  {
+    "id": "rel3",
+    "sourceId": "brainstem",
+    "targetId": "cerebellum",
+    "type": "connects",
+    "description": "El tronco encefálico conecta con el cerebelo mediante los pedúnculos cerebelosos."
+  },
+  {
+    "id": "rel4",
+    "sourceId": "brainstem",
+    "targetId": "cerebrum",
+    "type": "connects",
+    "description": "El tronco encefálico conecta el cerebro con la médula espinal."
+  },
+  {
+    "id": "rel5",
+    "sourceId": "thalamus",
+    "targetId": "hippocampus",
+    "type": "connects",
+    "description": "El tálamo tiene conexiones neuronales con el hipocampo."
+  }
+]
